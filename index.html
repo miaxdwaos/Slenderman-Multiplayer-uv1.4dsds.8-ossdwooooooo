@@ -34,7 +34,7 @@
             <button class="btn-join" onclick="connectToHost()">UNIRSE AL JUEGO</button>
         </div>
         <button id="start-btn" class="btn-start" onclick="startGame()">INICIAR PARTIDA</button>
-        <div id="status-msg" style="color: #f1c40f; margin-top: 10px; font-size: 11px;">Mueve con FLECHAS o WASD.</div>
+        <div id="status-msg" style="color: #f1c40f; margin-top: 10px; font-size: 11px;">Controles: WASD o FLECHAS.</div>
     </div>
 </div>
 
@@ -76,16 +76,7 @@
     function getPlayerName(id) {
         if (!id) return "???";
         let short = id.substring(0, 4);
-        let count = 0;
-        let index = 1;
-        const allIds = Object.keys(players).sort();
-        for (let pId of allIds) {
-            if (pId.substring(0, 4) === short) {
-                if (pId === id) index = count + 1;
-                count++;
-            }
-        }
-        return count > 1 ? `${short}(${index})` : short;
+        return short;
     }
 
     peer.on('open', id => {
@@ -139,12 +130,6 @@
         }
     }
 
-    window.addEventListener('beforeunload', () => {
-        const msg = { type: 'disconnect', id: myId };
-        if (hostConn && hostConn.open) hostConn.send(msg);
-        for (let id in connections) if (connections[id].open) connections[id].send(msg);
-    });
-
     function removePlayer(peerId) {
         if (players[peerId]) {
             const pName = getPlayerName(peerId);
@@ -153,14 +138,9 @@
                 connections[peerId].close();
                 delete connections[peerId];
             }
-            if (Object.keys(players).length < 2) {
-                alert("Juego Reiniciandose, Todos Los jugadores en multiplayer se salieron");
-                location.reload();
-            } else {
-                addChatMessage("Sistema", `${pName} abandonó la sala.`);
-                updateLobbyUI();
-                syncToAll();
-            }
+            addChatMessage("Sistema", `${pName} abandonó la sala.`);
+            updateLobbyUI();
+            syncToAll();
         }
     }
 
@@ -168,7 +148,7 @@
         const startBtn = document.getElementById('start-btn');
         const playerCount = Object.keys(players).length;
         if (!hostConn) {
-            startBtn.style.display = playerCount >= 2 ? 'block' : 'none';
+            startBtn.style.display = playerCount >= 1 ? 'block' : 'none';
         }
     }
 
@@ -184,14 +164,9 @@
             }, 30);
         });
         hostConn.on('data', handleData);
-        hostConn.on('close', () => { 
-            alert("Juego Reiniciandose, Todos Los jugadores en multiplayer se salieron"); 
-            location.reload(); 
-        });
     }
 
     function startGame() {
-        if (Object.keys(players).length < 2) return alert("Faltan jugadores.");
         gameStarted = true;
         notesCollected = 0; maxNotes = 0;
         for(let r=0; r<worldMap.length; r++) {
@@ -221,17 +196,18 @@
 
     // --- MOVIMIENTO Y RENDER ---
     let posX = 1.5, posY = 1.5, dirX = 1, dirY = 0, planeX = 0, planeY = 0.66;
-    let moveSpeed = 0.08, rotSpeed = 0.05;
+    let moveSpeed = 0.06, rotSpeed = 0.04;
 
     let keys = {};
-    window.onkeydown = e => { if(!chatInput.matches(':focus')) keys[e.code] = true; };
-    window.onkeyup = e => keys[e.code] = false;
+    window.addEventListener('keydown', e => { if(!chatInput.matches(':focus')) keys[e.code] = true; });
+    window.addEventListener('keyup', e => keys[e.code] = false);
 
     function handleMovement() {
         if(!gameStarted || isDead) return;
         
-        // CORREGIDO: Giro Izquierda (A / Flecha Izquierda)
-        if (keys['ArrowLeft'] || keys['KeyA']) {
+        // --- ROTACIÓN ---
+        // Izquierda: A o Flecha Izquierda
+        if (keys['KeyA'] || keys['ArrowLeft']) {
             let oldDirX = dirX;
             dirX = dirX * Math.cos(rotSpeed) - dirY * Math.sin(rotSpeed);
             dirY = oldDirX * Math.sin(rotSpeed) + dirY * Math.cos(rotSpeed);
@@ -239,8 +215,8 @@
             planeX = planeX * Math.cos(rotSpeed) - planeY * Math.sin(rotSpeed);
             planeY = oldPlaneX * Math.sin(rotSpeed) + planeY * Math.cos(rotSpeed);
         }
-        // CORREGIDO: Giro Derecha (D / Flecha Derecha)
-        if (keys['ArrowRight'] || keys['KeyD']) {
+        // Derecha: D o Flecha Derecha
+        if (keys['KeyD'] || keys['ArrowRight']) {
             let oldDirX = dirX;
             dirX = dirX * Math.cos(-rotSpeed) - dirY * Math.sin(-rotSpeed);
             dirY = oldDirX * Math.sin(-rotSpeed) + dirY * Math.cos(-rotSpeed);
@@ -249,21 +225,31 @@
             planeY = oldPlaneX * Math.sin(-rotSpeed) + planeY * Math.cos(-rotSpeed);
         }
 
-        let moveX = (keys['ArrowUp'] || keys['KeyW'] ? 1 : (keys['ArrowDown'] || keys['KeyS'] ? -1 : 0));
-        let targetX = posX + dirX * moveSpeed * moveX;
-        let targetY = posY + dirY * moveSpeed * moveX;
-        
-        if(worldMap[Math.floor(targetX)] && worldMap[Math.floor(targetX)][Math.floor(posY)] !== 1) posX = targetX;
-        if(worldMap[Math.floor(posX)] && worldMap[Math.floor(posX)][Math.floor(targetY)] !== 1) posY = targetY;
-        
-        players[myId].x = posX; players[myId].y = posY;
+        // --- TRASLACIÓN ---
+        // Avanzar/Retroceder: W/S o Flecha Arriba/Abajo
+        let moveDir = 0;
+        if (keys['KeyW'] || keys['ArrowUp']) moveDir = 1;
+        if (keys['KeyS'] || keys['ArrowDown']) moveDir = -1;
 
+        if (moveDir !== 0) {
+            let targetX = posX + dirX * moveSpeed * moveDir;
+            let targetY = posY + dirY * moveSpeed * moveDir;
+            
+            if(worldMap[Math.floor(targetX)][Math.floor(posY)] !== 1) posX = targetX;
+            if(worldMap[Math.floor(posX)][Math.floor(targetY)] !== 1) posY = targetY;
+        }
+        
+        players[myId].x = posX; 
+        players[myId].y = posY;
+
+        // Recoger notas
         let mx = Math.floor(posX), my = Math.floor(posY);
         if(worldMap[mx] && worldMap[mx][my] === 2) {
             let msg = { type: 'collect', cx: mx, cy: my };
             if (hostConn) hostConn.send(msg); else handleData(msg);
         }
 
+        // Lógica de Slenderman (Solo Host gestiona IA)
         if(!hostConn && slenderman.active) {
             let closest = null, minDist = 999;
             for(let id in players) {
@@ -274,10 +260,10 @@
             }
             if(closest) {
                 let angle = Math.atan2(closest.y - slenderman.y, closest.x - slenderman.x);
-                slenderman.x += Math.cos(angle) * 0.025; slenderman.y += Math.sin(angle) * 0.025;
+                slenderman.x += Math.cos(angle) * 0.02; slenderman.y += Math.sin(angle) * 0.02;
             }
             for(let id in players) {
-                if(!players[id].isDead && Math.hypot(players[id].x - slenderman.x, players[id].y - slenderman.y) < 0.45) {
+                if(!players[id].isDead && Math.hypot(players[id].x - slenderman.x, players[id].y - slenderman.y) < 0.4) {
                     players[id].isDead = true;
                     if (id === myId) isDead = true;
                     syncToAll();
@@ -293,7 +279,7 @@
         
         if(!gameStarted) {
             ctx.fillStyle = "white"; ctx.textAlign = "center"; 
-            ctx.fillText("MODO MULTIJUGADOR - USA FLECHAS O WASD", w/2, h/2);
+            ctx.fillText("MODO MULTIJUGADOR - USA WASD O FLECHAS", w/2, h/2);
             requestAnimationFrame(render); return;
         }
 
